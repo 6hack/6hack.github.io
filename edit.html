@@ -3,195 +3,179 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>3D Spaceship Dodger</title>
+  <title>Basic FPS Game</title>
   <style>
     body {
       margin: 0;
       overflow: hidden;
-      background-color: #000;
-      color: white;
-      font-family: Arial, sans-serif;
+      background: black;
     }
-
-    #menu {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background-color: rgba(0, 0, 0, 0.9);
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      z-index: 10;
-    }
-
-    #menu h1 {
-      margin: 0;
-      font-size: 3rem;
-    }
-
-    #menu p {
-      margin: 10px 0;
-      font-size: 1.2rem;
-      color: #ccc;
-    }
-
-    #menu button {
-      padding: 10px 20px;
-      margin-top: 20px;
-      font-size: 1.5rem;
-      color: white;
-      background-color: #007BFF;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-    }
-
-    #menu button:hover {
-      background-color: #0056b3;
-    }
-
     canvas {
       display: block;
+    }
+    #crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 10px;
+      height: 10px;
+      background-color: red;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 10;
     }
   </style>
 </head>
 <body>
-  <div id="menu">
-    <h1>Spaceship Dodger</h1>
-    <p id="loadingMessage">Loading models...</p>
-    <button id="startButton" onclick="startGame()" disabled>Start Game</button>
-  </div>
+  <div id="crosshair"></div>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
   <script>
-    let scene, camera, renderer;
-    let player = null;
-    let obstacles = [];
-    let isGameRunning = false;
+    // Scene, Camera, and Renderer
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
 
-    // DOM Elements
-    const loadingMessage = document.getElementById('loadingMessage');
-    const startButton = document.getElementById('startButton');
+    // Pointer Lock Controls for FPS Movement
+    const controls = new THREE.PointerLockControls(camera, document.body);
 
-    // Initialize Three.js
-    function init() {
-      scene = new THREE.Scene();
-      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-      renderer = new THREE.WebGLRenderer();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      document.body.appendChild(renderer.domElement);
+    // Add event listeners for pointer lock
+    document.body.addEventListener('click', () => {
+      controls.lock();
+    });
 
-      camera.position.z = 5;
+    // Skybox
+    const skyGeometry = new THREE.SphereGeometry(500, 64, 64);
+    const skyMaterial = new THREE.MeshBasicMaterial({ color: 0x87ceeb, side: THREE.BackSide });
+    const skybox = new THREE.Mesh(skyGeometry, skyMaterial);
+    scene.add(skybox);
 
-      // Add lighting
-      const light = new THREE.PointLight(0xffffff, 1, 100);
-      light.position.set(10, 10, 10);
-      scene.add(light);
+    // Ground
+    const groundGeometry = new THREE.PlaneGeometry(100, 100);
+    const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x228B22 });
+    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+    ground.rotation.x = -Math.PI / 2;
+    scene.add(ground);
 
-      // Load models and wait for all to complete
-      loadModels().then(() => {
-        loadingMessage.textContent = 'Models loaded! Click Start to play.';
-        startButton.disabled = false;
-      }).catch((err) => {
-        loadingMessage.textContent = 'Some models failed to load. You can still play.';
-        console.warn('Model loading error:', err);
-        startButton.disabled = false;
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+    directionalLight.position.set(10, 10, 10);
+    scene.add(directionalLight);
+
+    // Player movement variables
+    const playerSpeed = 0.1;
+    const velocity = new THREE.Vector3();
+    const keys = { w: false, s: false, a: false, d: false };
+
+    window.addEventListener('keydown', (event) => {
+      if (event.key in keys) keys[event.key] = true;
+    });
+
+    window.addEventListener('keyup', (event) => {
+      if (event.key in keys) keys[event.key] = false;
+    });
+
+    // Shooting
+    const raycaster = new THREE.Raycaster();
+    const shootTargets = [];
+
+    // Sound Effects
+    const shootSound = new Audio('https://freesound.org/data/previews/66/66061_634166-lq.mp3');
+    const hitSound = new Audio('https://freesound.org/data/previews/337/337049_3230735-lq.mp3');
+
+    function playSound(sound) {
+      sound.currentTime = 0;
+      sound.play();
+    }
+
+    // Create target
+    function createTarget(position) {
+      const targetGeometry = new THREE.BoxGeometry(1, 1, 1);
+      const targetMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+      const target = new THREE.Mesh(targetGeometry, targetMaterial);
+      target.position.copy(position);
+      target.health = 3; // Simple health system
+      target.velocity = new THREE.Vector3(
+        (Math.random() - 0.5) * 0.05,
+        (Math.random() - 0.5) * 0.05,
+        0
+      ); // Random movement
+      shootTargets.push(target);
+      scene.add(target);
+    }
+
+    // Add initial targets
+    for (let i = 0; i < 5; i++) {
+      createTarget(new THREE.Vector3(Math.random() * 20 - 10, 1, Math.random() * -20));
+    }
+
+    // Handle shooting
+    document.addEventListener('click', () => {
+      if (!controls.isLocked) return;
+
+      playSound(shootSound);
+
+      raycaster.set(camera.position, camera.getWorldDirection(new THREE.Vector3()));
+      const intersects = raycaster.intersectObjects(shootTargets);
+
+      if (intersects.length > 0) {
+        const target = intersects[0].object;
+        target.health -= 1;
+        if (target.health <= 0) {
+          scene.remove(target);
+          playSound(hitSound);
+
+          // Remove from the list and spawn a new target
+          const index = shootTargets.indexOf(target);
+          if (index > -1) shootTargets.splice(index, 1);
+          createTarget(new THREE.Vector3(Math.random() * 20 - 10, 1, Math.random() * -20));
+        }
+      }
+    });
+
+    // Player movement
+    function movePlayer(delta) {
+      if (keys.w) velocity.z = -playerSpeed;
+      if (keys.s) velocity.z = playerSpeed;
+      if (keys.a) velocity.x = -playerSpeed;
+      if (keys.d) velocity.x = playerSpeed;
+
+      controls.moveRight(velocity.x * delta);
+      controls.moveForward(velocity.z * delta);
+
+      velocity.set(0, 0, 0);
+    }
+
+    // Animate targets
+    function moveTargets() {
+      shootTargets.forEach(target => {
+        target.position.add(target.velocity);
+
+        // Bounce targets if they hit boundaries
+        if (target.position.x > 10 || target.position.x < -10) target.velocity.x *= -1;
+        if (target.position.y > 5 || target.position.y < 0) target.velocity.y *= -1;
       });
-    }
-
-    // Load 3D models
-    function loadModels() {
-      const loader = new THREE.GLTFLoader();
-
-      const loadPlayer = new Promise((resolve, reject) => {
-        loader.load(
-          'https://modelviewer.dev/shared-assets/models/Astronaut.glb',
-          (gltf) => {
-            player = gltf.scene;
-            player.scale.set(0.5, 0.5, 0.5);
-            player.position.set(0, 0, 0);
-            scene.add(player);
-            console.log('Player model loaded.');
-            resolve();
-          },
-          undefined,
-          (error) => {
-            console.error('Error loading player model:', error);
-            reject(error);
-          }
-        );
-      });
-
-      const loadObstacles = Array.from({ length: 10 }).map(() =>
-        new Promise((resolve, reject) => {
-          loader.load(
-            'https://modelviewer.dev/shared-assets/models/LunarSurface.glb',
-            (gltf) => {
-              const obstacle = gltf.scene.clone();
-              obstacle.scale.set(0.3, 0.3, 0.3);
-              obstacle.position.set(Math.random() * 10 - 5, Math.random() * 10 - 5, -Math.random() * 20 - 5);
-              obstacles.push(obstacle);
-              scene.add(obstacle);
-              console.log('Obstacle model loaded.');
-              resolve();
-            },
-            undefined,
-            (error) => {
-              console.error('Error loading obstacle model:', error);
-              resolve(); // Resolve even if loading fails to allow the game to continue.
-            }
-          );
-        })
-      );
-
-      return Promise.all([loadPlayer, ...loadObstacles]);
-    }
-
-    // Start the game
-    function startGame() {
-      document.getElementById('menu').style.display = 'none';
-      isGameRunning = true;
-    }
-
-    // Handle player movement
-    const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
-    window.addEventListener('keydown', (e) => keys[e.key] = true);
-    window.addEventListener('keyup', (e) => keys[e.key] = false);
-
-    function movePlayer() {
-      if (!player) return;
-      if (keys.ArrowUp) player.position.y += 0.1;
-      if (keys.ArrowDown) player.position.y -= 0.1;
-      if (keys.ArrowLeft) player.position.x -= 0.1;
-      if (keys.ArrowRight) player.position.x += 0.1;
     }
 
     // Game loop
+    const clock = new THREE.Clock();
+
     function animate() {
       requestAnimationFrame(animate);
 
-      if (isGameRunning) {
-        movePlayer();
+      const delta = clock.getDelta();
 
-        // Move obstacles
-        obstacles.forEach(obstacle => {
-          obstacle.position.z += 0.1;
-          if (obstacle.position.z > 5) {
-            obstacle.position.z = -20;
-            obstacle.position.x = Math.random() * 10 - 5;
-            obstacle.position.y = Math.random() * 10 - 5;
-          }
-
-          // Check collision
-          if (player && player.position.distanceTo(obstacle.position) < 1) {
-            alert('Game Over!');
-            location.reload();
-          }
-        });
+      if (controls.isLocked) {
+        movePlayer(delta);
       }
+
+      moveTargets();
 
       renderer.render(scene, camera);
     }
@@ -204,8 +188,6 @@
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
-
-    init();
   </script>
 </body>
 </html>
