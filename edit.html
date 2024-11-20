@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Spaceship Dodger</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #000;
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+
+    #menu {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.9);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 10;
+    }
+
+    #menu h1 {
+      margin: 0;
+      font-size: 3rem;
+    }
+
+    #menu p {
+      margin: 10px 0;
+      font-size: 1.2rem;
+      color: #ccc;
+    }
+
+    #menu button {
+      padding: 10px 20px;
+      margin-top: 20px;
+      font-size: 1.5rem;
+      color: white;
+      background-color: #007BFF;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    #menu button:hover {
+      background-color: #0056b3;
+    }
+
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div id="menu">
+    <h1>Spaceship Dodger</h1>
+    <p id="loadingMessage">Loading models...</p>
+    <button id="startButton" onclick="startGame()" disabled>Start Game</button>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script>
+    let scene, camera, renderer;
+    let player = null;
+    let obstacles = [];
+    let isGameRunning = false;
+
+    // DOM Elements
+    const loadingMessage = document.getElementById('loadingMessage');
+    const startButton = document.getElementById('startButton');
+
+    // Initialize Three.js
+    function init() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      renderer = new THREE.WebGLRenderer();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      camera.position.z = 5;
+
+      // Add lighting
+      const light = new THREE.PointLight(0xffffff, 1, 100);
+      light.position.set(10, 10, 10);
+      scene.add(light);
+
+      // Load models and wait for all to complete
+      loadModels().then(() => {
+        loadingMessage.textContent = 'Models loaded! Click Start to play.';
+        startButton.disabled = false;
+      }).catch((err) => {
+        loadingMessage.textContent = 'Some models failed to load. You can still play.';
+        console.warn('Model loading error:', err);
+        startButton.disabled = false;
+      });
+    }
+
+    // Load 3D models
+    function loadModels() {
+      const loader = new THREE.GLTFLoader();
+
+      const loadPlayer = new Promise((resolve, reject) => {
+        loader.load(
+          'https://modelviewer.dev/shared-assets/models/Astronaut.glb',
+          (gltf) => {
+            player = gltf.scene;
+            player.scale.set(0.5, 0.5, 0.5);
+            player.position.set(0, 0, 0);
+            scene.add(player);
+            console.log('Player model loaded.');
+            resolve();
+          },
+          undefined,
+          (error) => {
+            console.error('Error loading player model:', error);
+            reject(error);
+          }
+        );
+      });
+
+      const loadObstacles = Array.from({ length: 10 }).map(() =>
+        new Promise((resolve, reject) => {
+          loader.load(
+            'https://modelviewer.dev/shared-assets/models/LunarSurface.glb',
+            (gltf) => {
+              const obstacle = gltf.scene.clone();
+              obstacle.scale.set(0.3, 0.3, 0.3);
+              obstacle.position.set(Math.random() * 10 - 5, Math.random() * 10 - 5, -Math.random() * 20 - 5);
+              obstacles.push(obstacle);
+              scene.add(obstacle);
+              console.log('Obstacle model loaded.');
+              resolve();
+            },
+            undefined,
+            (error) => {
+              console.error('Error loading obstacle model:', error);
+              resolve(); // Resolve even if loading fails to allow the game to continue.
+            }
+          );
+        })
+      );
+
+      return Promise.all([loadPlayer, ...loadObstacles]);
+    }
+
+    // Start the game
+    function startGame() {
+      document.getElementById('menu').style.display = 'none';
+      isGameRunning = true;
+    }
+
+    // Handle player movement
+    const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
+    window.addEventListener('keydown', (e) => keys[e.key] = true);
+    window.addEventListener('keyup', (e) => keys[e.key] = false);
+
+    function movePlayer() {
+      if (!player) return;
+      if (keys.ArrowUp) player.position.y += 0.1;
+      if (keys.ArrowDown) player.position.y -= 0.1;
+      if (keys.ArrowLeft) player.position.x -= 0.1;
+      if (keys.ArrowRight) player.position.x += 0.1;
+    }
+
+    // Game loop
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (isGameRunning) {
+        movePlayer();
+
+        // Move obstacles
+        obstacles.forEach(obstacle => {
+          obstacle.position.z += 0.1;
+          if (obstacle.position.z > 5) {
+            obstacle.position.z = -20;
+            obstacle.position.x = Math.random() * 10 - 5;
+            obstacle.position.y = Math.random() * 10 - 5;
+          }
+
+          // Check collision
+          if (player && player.position.distanceTo(obstacle.position) < 1) {
+            alert('Game Over!');
+            location.reload();
+          }
+        });
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    init();
+  </script>
+</body>
+</html>
